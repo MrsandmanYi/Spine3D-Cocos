@@ -1,0 +1,97 @@
+CCEffect %{
+  techniques:
+  - name: spine101
+    passes:
+    - vert: spine3d-vs:vert # builtin header
+      frag: spine3d-fs:frag
+      depthStencilState:
+        depthTest: true
+        depthWrite: true
+      blendState:
+        targets:
+        - blend: true
+          blendSrc: src_alpha
+          blendDst: one_minus_src_alpha
+          blendDstAlpha: one_minus_src_alpha
+      properties: &props
+        mainTexture:    { value: white } 
+        mainColor:      { value: [1, 1, 1, 1], editor: { type: color } }    
+}%
+
+CCProgram spine3d-vs %{
+
+  precision highp float;
+  #include <legacy/input-standard>
+  #include <builtin/uniforms/cc-global>
+  #include <legacy/local-batch>
+  #include <legacy/input-standard>
+  #include <legacy/fog-vs>
+  #include <legacy/shadow-map-vs>
+
+  in vec4 a_color;
+  #if HAS_SECOND_UV
+    in vec2 a_texCoord1;
+  #endif
+
+  out vec3 v_position;
+  out vec3 v_normal;
+  out vec3 v_tangent;
+  out vec3 v_bitangent;
+  out vec2 v_uv;
+  //out vec2 v_uv1;
+  out vec4 v_color;
+  //out vec4 v_dark;
+
+  vec4 vert () {
+    StandardVertInput In;
+    CCVertInput(In);
+
+    mat4 matWorld, matWorldIT;
+    CCGetWorldMatrixFull(matWorld, matWorldIT);
+
+    vec4 pos = matWorld * In.position;
+
+    v_position = pos.xyz;
+    v_normal = normalize((matWorldIT * vec4(In.normal, 0.0)).xyz);
+    v_tangent = normalize((matWorld * vec4(In.tangent.xyz, 0.0)).xyz);
+    v_bitangent = cross(v_normal, v_tangent) * In.tangent.w; // note the cross order
+
+    v_uv = a_texCoord;
+    // #if HAS_SECOND_UV
+    //   v_uv1 = a_texCoord1;
+    // #endif
+    v_color = a_color;
+
+    // CC_TRANSFER_FOG(pos);
+    // CC_TRANSFER_SHADOW(pos);
+
+    return cc_matProj * (cc_matView * matWorld) * In.position;
+  }
+}%
+
+CCProgram spine3d-fs %{
+  precision highp float;
+    #include <builtin/internal/alpha-test>
+  #include <legacy/output>
+
+  in vec4 v_color;
+  // #if TWO_COLORED
+  //   in vec4 v_dark;
+  // #endif
+  in vec2 v_uv;
+
+  uniform sampler2D mainTexture;
+
+  uniform Constant {
+    vec4 mainColor;
+  };
+
+  vec4 frag(){     
+    vec4 col = mainColor * texture(mainTexture, v_uv); // 计算最终的颜色
+    col.rgb *= v_color.rgb;
+    col.a *= v_color.a;
+    ALPHA_TEST(col);
+    return CCFragOutput(col);  
+    //return CCFragOutput(v_color);  
+  }
+}%

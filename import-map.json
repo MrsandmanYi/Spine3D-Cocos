@@ -1,0 +1,5 @@
+{
+    "imports": {
+        "@spine-core/": "./assets/scripts/@esotericsoftware/spine-core/"
+    }
+}
