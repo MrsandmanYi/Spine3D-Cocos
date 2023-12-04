@@ -13,6 +13,7 @@ import { MeshRenderer } from 'cc';
 import { EDITOR, EDITOR_NOT_IN_PREVIEW } from 'cc/env';
 import { PREVIEW_NODE_NAME, SpineTextureContainer } from './SpineInterface';
 import { Vec3 } from 'cc';
+import { SpineMeshGeometry } from './SpineMeshGeometry';
 
 export class DynamicGeometryInfo{
     constructor(){
@@ -124,15 +125,8 @@ export class SkeletonRenderer extends Component{
         const vertexSize = this.vertexSize;
         let skeleton = this.skeleton;
 
-        let attachment = slot.getAttachment();
-        if (attachment == null ) {
-            //console.error("Slot attachment is null");
-            return null;
-        }
-
-        if (!(attachment instanceof RegionAttachment) && !(attachment instanceof MeshAttachment)) {
-            // 裁剪组件暂不支持，性能消耗大。
-            console.error("Slot attachment not supported: " + attachment + " (" + attachment.name + ")");
+        let spineMeshGeometry = this.getMeshData(slot, drawOrder);
+        if (spineMeshGeometry == null) {
             return null;
         }
 
@@ -144,6 +138,69 @@ export class SkeletonRenderer extends Component{
             rendererNode.parent = this.node;
         }
         rendererNode.setWorldPosition(this.node.worldPosition);
+
+
+        let options: primitives.ICreateDynamicMeshOptions = {
+            maxSubMeshes: 1,
+            maxSubMeshVertices: spineMeshGeometry.positions.length / vertexSize,
+            maxSubMeshIndices: spineMeshGeometry.indices32.length
+        };
+
+        let renderer : MeshRenderer = rendererNode.addComponent(MeshRenderer);
+        if (spineMeshGeometry.texture!=null) {
+            for(let i = 0, n = this.textures.length; i < n; i++){
+                if (this.textures[i].texture.uuid == spineMeshGeometry.texture.getImage().uuid) {
+                    renderer.sharedMaterials = new Array(1).fill(this.textures[i].material);
+                    break;
+                }
+            }    
+        }
+
+        let geometry : primitives.IDynamicGeometry = {
+            positions: spineMeshGeometry.positions,
+            normals: spineMeshGeometry.normals,
+            uvs: spineMeshGeometry.uvs,
+            indices32: spineMeshGeometry.indices32,
+            colors: spineMeshGeometry.colors,
+            minPos : spineMeshGeometry.minPos,
+            maxPos : spineMeshGeometry.maxPos
+        };
+
+        const mesh = utils.MeshUtils.createDynamicMesh(0, geometry , undefined, options);
+        renderer.mesh = mesh;
+        mesh.updateSubMesh(0, geometry);
+
+        this.dMeshGeometries.push(geometry);
+        if (slot.data) {
+            let gInfo = new DynamicGeometryInfo();
+            gInfo.index = this.dMeshGeometries.length - 1;
+            gInfo.geometry = geometry;
+            gInfo.meshRenderer = renderer;
+            this.dMeshGeometryMap.set(slot.data.name,gInfo);    
+            return gInfo;            
+        }
+        else {
+            console.error("Slot data is null");
+        }
+        return null;
+    }
+
+    protected getMeshData(slot, drawOrder : number) :  SpineMeshGeometry{
+
+        const vertexSize = this.vertexSize;
+        let skeleton = this.skeleton;
+
+        let attachment = slot.getAttachment();
+        if (attachment == null ) {
+            //console.error("Slot attachment is null");
+            return null;
+        }
+
+        if (!(attachment instanceof RegionAttachment) && !(attachment instanceof MeshAttachment)) {
+            // 裁剪组件暂不支持，性能消耗大。
+            console.error("Slot attachment not supported: " + attachment + " (" + attachment.name + ")");
+            return null;
+        }
       
         let sVertices: Float32Array;
         let sNumVertices : number;
@@ -180,15 +237,10 @@ export class SkeletonRenderer extends Component{
         let darkColor = new Color(1,1,1,1);    // TODO 背面颜色
         let slotBlendMode = slot.data.blendMode;  // TODO 需要改变材质的渲染模式
 
-        let renderer : MeshRenderer = rendererNode.addComponent(MeshRenderer);
+        let texExists = false;
+
         if (sTexture) {
-            
-            for(let i = 0, n = this.textures.length; i < n; i++){
-                if (this.textures[i].texture.uuid == sTexture.getImage().uuid) {
-                    renderer.sharedMaterials = new Array(1).fill(this.textures[i].material);
-                    break;
-                }
-            }    
+            texExists = true;
             //console.error(sTexture.getImage());
 
             let slotColor = slot.color;
@@ -245,39 +297,17 @@ export class SkeletonRenderer extends Component{
 
         let minMax = this.getMinMaxPos(sVertices,vertexSize);
 
-        // 开始创建子Mesh
-        let geometry: primitives.IDynamicGeometry = {
+        return {
             positions: sVertices,
             normals: normals,
             uvs: sUVs,
             indices32: sTriangles,
             colors: colors,
+            indexOffset : sVertices.length / vertexSize,
             minPos: minMax.minPos,
             maxPos: minMax.maxPos,
-        }
-
-        let options: primitives.ICreateDynamicMeshOptions = {
-            maxSubMeshes: 1,
-            maxSubMeshVertices: sVertices.length / vertexSize,
-            maxSubMeshIndices: sTriangles.length
+            texture : sTexture
         };
-        const mesh = utils.MeshUtils.createDynamicMesh(0, geometry , undefined, options);
-        renderer.mesh = mesh;
-        mesh.updateSubMesh(0, geometry);
-
-        this.dMeshGeometries.push(geometry);
-        if (slot.data) {
-            let gInfo = new DynamicGeometryInfo();
-            gInfo.index = this.dMeshGeometries.length - 1;
-            gInfo.geometry = geometry;
-            gInfo.meshRenderer = renderer;
-            this.dMeshGeometryMap.set(slot.data.name,gInfo);    
-            return gInfo;            
-        }
-        else {
-            console.error("Slot data is null");
-        }
-        return null;
     }
 
 
