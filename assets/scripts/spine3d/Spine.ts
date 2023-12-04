@@ -1,4 +1,4 @@
-import { _decorator, Component } from 'cc';
+import { _decorator, Component, Quat, Vec3 } from 'cc';
 import { JsonAsset } from 'cc';
 import { TextAsset } from 'cc';
 const { ccclass, property, requireComponent,executeInEditMode,playOnFocus} = _decorator;
@@ -26,6 +26,7 @@ import { BoneData } from '@spine-core/BoneData';
 import { BufferAsset } from 'cc';
 
 export type EnumType = Record<string, string | number>;
+const socketBoneMatrix4 = new Mat4();
 const tempMat4 = new Mat4();
 
 const DefaultSpineMaterialPath = "db://assets/material/mat_spine3d.mtl";
@@ -456,24 +457,44 @@ export class Spine extends Component {
         this.skeletonRenderer = this.getComponent(SkeletonRenderer);
         this.skeletonRenderer.init(this.skeleton, {textures : this.textures});
         
+        if (this.sockets) {
+            this._socketNodes = new Map<number, Node>();
+            this.sockets.forEach((socket) => {
+                this._socketNodes.set(socket.boneIndex, socket.target);
+            });
+        }
+
     }
 
     private syncSockets() {
-        if (this._socketNodes == null || this._socketNodes.size == 0) {
+        if (!(this._socketNodes == null || this._socketNodes.size == 0)) {
 
-            const matrixHandle = (node: Node, bone: any): void => {
-                const tm = tempMat4;
-                tm.m00 = bone.a;
-                tm.m01 = bone.c;
-                tm.m04 = bone.b;
-                tm.m05 = bone.d;
-                tm.m12 = bone.worldX;
-                tm.m13 = bone.worldY;
-                node.matrix = tempMat4;
+            const matrixHandle = (boneNode: Node, bone: Bone): void => {
+                //let pos = new Vec3(bone.worldX, bone.worldY, 0);
+                let boneMatrix4 = socketBoneMatrix4;
+                boneMatrix4.m00 = bone.a;
+                boneMatrix4.m01 = bone.c;
+                boneMatrix4.m04 = bone.b;
+                boneMatrix4.m05 = bone.d;
+                boneMatrix4.m12 = bone.worldX;
+                boneMatrix4.m13 = bone.worldY;
+
+                let spineMatrix4 = this.node.worldMatrix;
+                Mat4.multiply(tempMat4, spineMatrix4, boneMatrix4);
+
+                let worldPos = new Vec3();
+                tempMat4.getTranslation(worldPos);
+                worldPos.z = boneNode.worldPosition.z;
+                boneNode.worldPosition = worldPos;
+
+                boneNode.worldRotation = tempMat4.getRotation(new Quat());
+                //boneNode.worldScale = tempMat4.getScale(new Vec3());
             };
 
             for (const boneIdx of this.socketNodes.keys()) {
+                
                 const boneNode = this.socketNodes.get(boneIdx);
+                //const zPos = boneNode.position.z;
                 // Node has been destroy
                 if (!boneNode || !boneNode.isValid) {
                     this.socketNodes.delete(boneIdx);
@@ -488,6 +509,7 @@ export class Spine extends Component {
                     continue;
                 }
                 matrixHandle(boneNode, bone);
+                //boneNode.position = new Vec3(boneNode.position.x, boneNode.position.y, zPos);
             }
         }
     }
