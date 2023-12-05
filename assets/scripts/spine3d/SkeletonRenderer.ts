@@ -14,6 +14,7 @@ import { EDITOR, EDITOR_NOT_IN_PREVIEW } from 'cc/env';
 import { PREVIEW_NODE_NAME, SpineTextureContainer } from './SpineInterface';
 import { Vec3 } from 'cc';
 import { SpineMeshGeometry } from './SpineMeshGeometry';
+import { SpineBatcher } from './SpineBatcher';
 
 export class DynamicGeometryInfo{
     constructor(){
@@ -24,43 +25,47 @@ export class DynamicGeometryInfo{
     meshRenderer : MeshRenderer = null;
     drawRangeInfo : gfx.DrawInfo = null;
     lastActive : boolean = true;
+    spineBatcher : SpineBatcher = null;
 }
 
 @ccclass('SkeletonRenderer')
 export class SkeletonRenderer extends Component{
 
-    static QUAD_TRIANGLES : Uint32Array = new Uint32Array([0, 1, 2, 2, 3, 0]);
+    //static QUAD_TRIANGLES : Uint32Array = new Uint32Array([0, 1, 2, 2, 3, 0]);
 
     static Disable_Geometry: primitives.IDynamicGeometry = {
         positions: new Float32Array(0),
         indices32: new Uint32Array(0)
     }
 
-    private skeleton : Skeleton = null;
+    protected skeleton : Skeleton = null;
     
-    private clipper: SkeletonClipping = new SkeletonClipping();
+    protected clipper: SkeletonClipping = new SkeletonClipping();
 
     @property({type:Number, range:[0.01,2,0.01]})
-    private meshOffset = 0.2;
+    protected meshOffset = 0.2;
     @property({type:Boolean})
-    private twoColorTint : boolean = false;
+    protected twoColorTint : boolean = false;
     @property({type:Boolean})
-    private premultipliedAlpha = false;
+    protected premultipliedAlpha = false;
+    @property({type:Boolean})
+    protected isBatch = false;
 
     @property({type:Number, readonly:true})
-    private drawCallCount : number = 0;
+    protected drawCallCount : number = 0;
     @property({type:Number, readonly:true})
-    private triangleCount : number = 0;
+    protected triangleCount : number = 0;
     @property({type:Number, readonly:true})
-    private vertexCount : number = 0;
+    protected vertexCount : number = 0;
 
-    private textures : SpineTextureContainer[] = [];
+    protected textures : SpineTextureContainer[] = [];
 
-    private dMeshGeometries: primitives.IDynamicGeometry[] = [];
-    private dMeshGeometryMap = new Map<string, DynamicGeometryInfo>();
+    protected dMeshGeometries: primitives.IDynamicGeometry[] = [];
+    protected dMeshGeometryMap = new Map<string, DynamicGeometryInfo>();
 
+    protected spineBatcherMap = new Map<string, SpineBatcher>();
 
-    private vertexSize = 3;
+    protected vertexSize = 3;
 
     protected previewNode : Node = null;
     // DEBUG
@@ -90,18 +95,65 @@ export class SkeletonRenderer extends Component{
         this.skeleton = skeleton;
         this.textures = params.textures;
 
-        // 根据Slot创建动态Mesh，一个Slot创建一个子Mesh
-        let slots = skeleton.slots;
-        for (let i = 0, n = slots.length; i < n; i++) {
-            let slot = slots[i];
-            if(this.createMeshGeometry(slot, i)!=null){
-                
+        if (this.isBatch) {
+            this.textures.forEach((value, index) => {
+                let spineBatcher = new SpineBatcher(1000,3000);
+                let rendererNode = new Node(value.name + "_renderer");
+                if (EDITOR && EDITOR_NOT_IN_PREVIEW) {
+                    rendererNode.parent = this.previewNode;
+                }
+                else{
+                    rendererNode.parent = this.node;
+                }
+                rendererNode.setWorldPosition(this.node.worldPosition);
+                let renderer : MeshRenderer = rendererNode.addComponent(MeshRenderer);
+                renderer.mesh = spineBatcher.mesh;
+                renderer.sharedMaterials = new Array(1).fill(value.material);
+                spineBatcher.meshRenderer = renderer;
+                this.spineBatcherMap.set(value.texture.uuid,spineBatcher);
+            });
+    
+            let slots = skeleton.slots;
+            for (let i = 0, n = slots.length; i < n; i++) {
+                let slot = slots[i];
+                let spineMeshGeometry = this.getMeshData(slot, i);
+                if (spineMeshGeometry == null) {
+                    continue;
+                }
+                let spineBatcher = this.spineBatcherMap.get(spineMeshGeometry.texture.getImage().uuid);
+                if (spineBatcher == null) {
+                    continue;
+                }
+                spineBatcher.addGeometry(spineMeshGeometry);
+
+                let gInfo = new DynamicGeometryInfo();
+                gInfo.index = this.dMeshGeometries.length - 1;
+                gInfo.geometry = spineMeshGeometry;
+                gInfo.meshRenderer = spineBatcher.meshRenderer;
+                gInfo.spineBatcher = spineBatcher;
+                this.dMeshGeometryMap.set(slot.data.name,gInfo);
             }
+
+            this.spineBatcherMap.forEach((value, key) => {
+                value.updateMesh();
+            });
+        }
+        else{
+            // 根据Slot创建动态Mesh，一个Slot创建一个子Mesh
+            let slots = skeleton.slots;
+            for (let i = 0, n = slots.length; i < n; i++) {
+                let slot = slots[i];
+                if(this.createMeshGeometry(slot, i)!=null){
+                    
+                }
+            }
+
+            this.dMeshGeometryMap.forEach((value, key) => {
+                value.meshRenderer.onGeometryChanged();
+            });
         }
 
-        this.dMeshGeometryMap.forEach((value, key) => {
-            value.meshRenderer.onGeometryChanged();
-        });
+
     }
 
     clear(){
@@ -109,10 +161,15 @@ export class SkeletonRenderer extends Component{
             return;
         }
         this.dMeshGeometryMap.forEach((value, key) => {
-            value.meshRenderer.node.destroy();
+            if (value.meshRenderer && value.meshRenderer.node) {
+                value.meshRenderer.node.destroy();
+                value.meshRenderer = null;           
+            }
         });
         this.dMeshGeometryMap.clear();
         this.dMeshGeometries.splice(0,this.dMeshGeometries.length);
+
+        this.spineBatcherMap.clear();
 
         if (EDITOR && EDITOR_NOT_IN_PREVIEW) {
             if (this.node.getChildByName(PREVIEW_NODE_NAME)) {
@@ -216,7 +273,7 @@ export class SkeletonRenderer extends Component{
             region.computeWorldVertices(slot,sVertices, 0, vertexSize);
             sNumVertices = 4;
             sNumFloats = vertexSize << 2;
-            sTriangles = SkeletonRenderer.QUAD_TRIANGLES;
+            sTriangles =  new Uint32Array([0, 1, 2, 2, 3, 0]);
             sUVs = region.uvs as Float32Array;
             sTexture = region.region.texture;
             sAttachmentColor = region.color;
@@ -298,20 +355,26 @@ export class SkeletonRenderer extends Component{
         let minMax = this.getMinMaxPos(sVertices,vertexSize);
 
         return {
+            slotName : slot.data.name,
+
             positions: sVertices,
             normals: normals,
             uvs: sUVs,
             indices32: sTriangles,
             colors: colors,
-            indexOffset : sVertices.length / vertexSize,
+            
+            vertexOffset : 0,
+            
             minPos: minMax.minPos,
             maxPos: minMax.maxPos,
+            
             texture : sTexture
         };
     }
 
 
     onUpdate(dt: number): void {
+
         this.updateSkeleton();
 
         // if (this.mainCamera) {
@@ -391,7 +454,27 @@ export class SkeletonRenderer extends Component{
 
             if (geometryInfo == null) {
                 //console.error(`Slot data ${slot.data.name} not found`); 
-                this.createMeshGeometry(slot, drawOrder);
+                if (!this.isBatch) {
+                    this.createMeshGeometry(slot, drawOrder);                    
+                }
+                else{
+                    let spineMeshGeometry = this.getMeshData(slot, drawOrder);
+                    if (spineMeshGeometry == null) {
+                        continue;
+                    }
+                    let spineBatcher = this.spineBatcherMap.get(spineMeshGeometry.texture.getImage().uuid);
+                    if (spineBatcher == null) {
+                        continue;
+                    }
+                    spineBatcher.addGeometry(spineMeshGeometry);
+                    let gInfo = new DynamicGeometryInfo();
+                    gInfo.index = this.dMeshGeometries.length - 1;
+                    gInfo.geometry = spineMeshGeometry;
+                    gInfo.meshRenderer = spineBatcher.meshRenderer;
+                    gInfo.spineBatcher = spineBatcher;
+                    this.dMeshGeometryMap.set(slot.data.name,gInfo);
+                }
+                
                 continue;
             }
 
@@ -472,24 +555,49 @@ export class SkeletonRenderer extends Component{
         let triangleCount = 0;
         let vertexCount = 0;
 
-        this.dMeshGeometryMap.forEach((value, key) => {
-            if (value.lastActive) {
-                if (value.meshRenderer.enabled == false) {
-                    value.meshRenderer.enabled = true;
+        if (!this.isBatch) {
+            
+            this.dMeshGeometryMap.forEach((value, key) => {
+                if (value.lastActive) {
+                    if (value.meshRenderer.enabled == false) {
+                        value.meshRenderer.enabled = true;
+                    }
+                    value.meshRenderer.mesh.updateSubMesh(0, value.geometry);
+                    value.meshRenderer.onGeometryChanged();
+                    drawCall++;
+                    triangleCount += value.geometry.indices32.length / 3;
+                    vertexCount += value.geometry.positions.length / vertexSize;
                 }
-                value.meshRenderer.mesh.updateSubMesh(0, value.geometry);
-                value.meshRenderer.onGeometryChanged();
-                drawCall++;
+                else{
+                    if (value.meshRenderer.enabled == true) {
+                        value.meshRenderer.enabled = false;
+                    }
+                }
+               
+            });
+
+        }
+        else{
+            this.dMeshGeometryMap.forEach((value, key) => {
+                const spineMeshGeometry : SpineMeshGeometry= value.geometry as SpineMeshGeometry;
+                if (value.lastActive) {
+                    value.spineBatcher.updateGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions,spineMeshGeometry.uvs,spineMeshGeometry.colors);
+                }
+                else{
+                    //console.error("disableGeometry",spineMeshGeometry.slotName);
+                    value.spineBatcher.disableGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions.length / vertexSize);
+                }
+               
                 triangleCount += value.geometry.indices32.length / 3;
                 vertexCount += value.geometry.positions.length / vertexSize;
-            }
-            else{
-                if (value.meshRenderer.enabled == true) {
-                    value.meshRenderer.enabled = false;
-                }
-            }
-           
-        });
+            });
+
+            this.spineBatcherMap.forEach((value, key) => {
+                drawCall++;
+                value.updateMesh();
+            });
+        }
+
         this.drawCallCount = drawCall;
         this.triangleCount = triangleCount;
         this.vertexCount = vertexCount;

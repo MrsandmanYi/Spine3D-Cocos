@@ -310,9 +310,10 @@
     "meshOffset": 0.2,
     "twoColorTint": false,
     "premultipliedAlpha": false,
-    "drawCallCount": 18,
-    "triangleCount": 343,
-    "vertexCount": 276,
+    "isBatch": true,
+    "drawCallCount": 0,
+    "triangleCount": 0,
+    "vertexCount": 0,
     "_id": "2aXBq1E21JFrO8VwAyJ4J4"
   },
   {

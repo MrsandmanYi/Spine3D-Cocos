@@ -167,6 +167,7 @@ export class Spine extends Component {
 
         let atlasComplete = false;
         let pngCount = 0;
+        this.textures.splice(0,this.textures.length);
 
         const atlasUUID = await Editor.Message.request('asset-db', 'query-uuid', atlasUrl);
         AssetLibrary.loadAsset(atlasUUID, async (err, asset) => {
@@ -174,7 +175,6 @@ export class Spine extends Component {
             this.atlasAsset = atlasAsset._file;
             // 加载图片
             //console.log("atlasAsset",this.atlasAsset);
-            this.textures.splice(0,this.textures.length);
             let reader = new TextureAtlasReader(atlasAsset._file);
             let s = true;
 
@@ -199,7 +199,7 @@ export class Spine extends Component {
                     let textureUrl = skeletonUrl.substring(0,idx);
                     textureUrl = textureUrl + "/" + line;
                     console.log("start load texture:" + textureUrl);
-                    this.textures.splice(0,this.textures.length);
+                    //this.textures.splice(0,this.textures.length);
                     await Editor.Message.request('asset-db', 'query-uuid', textureUrl).then((uuid) => {
                         console.log("query-uuid texture:" + uuid);
                         AssetLibrary.loadAsset(uuid, async (err, asset) => {
