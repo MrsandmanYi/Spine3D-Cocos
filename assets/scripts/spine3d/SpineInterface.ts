@@ -22,6 +22,11 @@ export class SpineTextureContainer{
     texture : Asset;
     @property({type: String})
     name : string;
+
+    @property({type: Number})
+    vertexCount : number = 276;
+    @property({type: Number})
+    indicCount : number = 1029;
 }
 
 @ccclass('spine3d.SpineSocket')

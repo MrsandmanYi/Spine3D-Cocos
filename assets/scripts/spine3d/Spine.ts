@@ -1,4 +1,4 @@
-import { _decorator, Component, Quat, Vec3 } from 'cc';
+import { _decorator, Component, math, Quat, Vec3 } from 'cc';
 import { JsonAsset } from 'cc';
 import { TextAsset } from 'cc';
 const { ccclass, property, requireComponent,executeInEditMode,playOnFocus} = _decorator;
@@ -60,7 +60,6 @@ export class Spine extends Component {
     animation = "undefined";
     @property({type:String})
     animations : string[] = [];
-      
 
     @property({type:Number, range:[0,10]})
     timeScale = 1.0;
@@ -82,11 +81,14 @@ export class Spine extends Component {
 
     private accumulator = 0;
     @property({type:Number, range:[15,60]})
-    private fps = 30;
+    public fps = 30;
     @property({type:Number,range:[0.01,0.1],readonly:true})
     private fixedDeltaTime = 0.033; // 基础步长
     @property({type:Number, range:[1,10]})
     private maxSteps = 3; // 最大步数
+
+    private renderTotalStepCount : number = -1;
+    private renderStep : number = 0;
 
     private atlasAttachmentLoader : AtlasAttachmentLoader = null;
     private skeletonJson : SkeletonJson = null;
@@ -341,7 +343,6 @@ export class Spine extends Component {
 
         this.initSpine();
     }
-
     
     update(deltaTime: number) {
 
@@ -366,10 +367,44 @@ export class Spine extends Component {
         this.accumulator += deltaTime;
     
         let steps = 0;
+        let tempRenderTotalStepCount : number = -1; 
         while (this.accumulator >= this.fixedDeltaTime && steps < this.maxSteps) {
             this.fixedUpdate(this.fixedDeltaTime);
             this.accumulator -= this.fixedDeltaTime;
             steps++;
+
+            tempRenderTotalStepCount = 1;
+            this.renderStep = 0;
+            if (this.accumulator < this.fixedDeltaTime) {
+                if (deltaTime * 2 < this.fixedDeltaTime) {
+                    tempRenderTotalStepCount = 2;
+                    this.renderStep = 0;
+                }
+            }
+        }
+
+        if (tempRenderTotalStepCount > 0) {
+            // while (this.renderTotalStepCount != -1) {
+            //     // 上次的还没更新完成，不用管
+            //     //this.stepRenderer();
+            // }
+            this.renderTotalStepCount = tempRenderTotalStepCount;
+        }
+
+        this.stepRenderer();
+    }
+
+    stepRenderer(){
+        if (this.renderTotalStepCount > 0 && this.renderStep < this.renderTotalStepCount) {
+            this.renderStep++;
+            this.skeletonRenderer.onUpdate(this.renderStep,this.renderTotalStepCount);
+            this.syncSockets();
+            if (this.renderStep == this.renderTotalStepCount) {
+                this.renderTotalStepCount = -1;
+            }
+        }
+        else{
+            this.renderTotalStepCount = -1;
         }
     }
 
@@ -381,10 +416,6 @@ export class Spine extends Component {
             this.animationState.update(deltaTime);
             this.animationState.apply(this.skeleton);
             this.skeleton.updateWorldTransform();
-    
-            this.skeletonRenderer.onUpdate(deltaTime);
-
-            this.syncSockets();
         }
     }
 

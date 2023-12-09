@@ -26,6 +26,8 @@ export class DynamicGeometryInfo{
     drawRangeInfo : gfx.DrawInfo = null;
     lastActive : boolean = true;
     spineBatcher : SpineBatcher = null;
+    lastColor : Color = new Color(0,0,0,0);
+    finalColorChanged : boolean = true;
 }
 
 @ccclass('SkeletonRenderer')
@@ -50,6 +52,8 @@ export class SkeletonRenderer extends Component{
     protected premultipliedAlpha = false;
     @property({type:Boolean})
     protected isBatch = false;
+    @property({type:Boolean})
+    protected isChangeUVs = false;
 
     @property({type:Number, readonly:true})
     protected drawCallCount : number = 0;
@@ -97,7 +101,7 @@ export class SkeletonRenderer extends Component{
 
         if (this.isBatch) {
             this.textures.forEach((value, index) => {
-                let spineBatcher = new SpineBatcher(1000,3000);
+                let spineBatcher = new SpineBatcher(value.vertexCount,value.indicCount);
                 let rendererNode = new Node(value.name + "_renderer");
                 if (EDITOR && EDITOR_NOT_IN_PREVIEW) {
                     rendererNode.parent = this.previewNode;
@@ -242,6 +246,7 @@ export class SkeletonRenderer extends Component{
         return null;
     }
 
+    // TODO 现在会产生两倍的顶点内存，要使用索引来优化
     protected getMeshData(slot, drawOrder : number) :  SpineMeshGeometry{
 
         const vertexSize = this.vertexSize;
@@ -269,7 +274,7 @@ export class SkeletonRenderer extends Component{
 
         if (attachment instanceof RegionAttachment) {
             let region = <RegionAttachment>attachment;
-            sVertices = Utils.newFloatArray(vertexSize * 4) as Float32Array;
+            sVertices = Utils.newFloatArray(vertexSize * 4) as Float32Array;  // TODO 索引优化
             region.computeWorldVertices(slot,sVertices, 0, vertexSize);
             sNumVertices = 4;
             sNumFloats = vertexSize << 2;
@@ -282,7 +287,7 @@ export class SkeletonRenderer extends Component{
             let mesh = <MeshAttachment>attachment;
             sNumVertices = mesh.worldVerticesLength >> 1;
             sNumFloats = sNumVertices * vertexSize;
-            sVertices = Utils.newFloatArray(sNumFloats) as Float32Array;
+            sVertices = Utils.newFloatArray(sNumFloats) as Float32Array; // TODO 索引优化
             mesh.computeWorldVertices(slot, 0, mesh.worldVerticesLength, sVertices, 0, vertexSize);
             sTriangles = new Uint32Array(mesh.triangles);
             sUVs = mesh.uvs as Float32Array;
@@ -373,9 +378,9 @@ export class SkeletonRenderer extends Component{
     }
 
 
-    onUpdate(dt: number): void {
+    onUpdate(currentStep : number = 1, totalStep : number = 1): void {
 
-        this.updateSkeleton();
+        this.updateSkeleton(currentStep,totalStep);
 
         // if (this.mainCamera) {
         //     const meshRenderer = this.meshRenderer;
@@ -388,7 +393,7 @@ export class SkeletonRenderer extends Component{
     }
 
 
-    updateSkeleton() {
+    updateSkeleton(currentStep : number = 1, totalStep : number = 1) {
         if (!this.skeleton) {
             console.error("skeleton is null");
             return;
@@ -397,9 +402,16 @@ export class SkeletonRenderer extends Component{
         const vertexSize = this.vertexSize;
 
         let slots = this.skeleton.drawOrder;
-        for (let i = 0, n = slots.length; i < n; i++) { 
+        let geometryInfo = null;
+
+        let beginIndex = (slots.length / totalStep) * (currentStep - 1);
+        let endIndex = (slots.length / totalStep) * currentStep;
+
+        let updateSlotCount = 0
+
+        for (let i = beginIndex, n = endIndex; i < n; i++) { 
             let slot = slots[i];
-            let geometryInfo = this.dMeshGeometryMap.get(slot.data.name);
+            geometryInfo = this.dMeshGeometryMap.get(slot.data.name);
 
             const drawOrder = i;
             let attachment = slot.getAttachment();
@@ -439,17 +451,10 @@ export class SkeletonRenderer extends Component{
             }
 
 
-
-            if (!(attachment instanceof RegionAttachment) && !(attachment instanceof MeshAttachment)) {
+            if (geometryInfo == null && !(attachment instanceof RegionAttachment) && !(attachment instanceof MeshAttachment)) {
                 // 裁剪组件暂不支持，性能消耗大。
                 //console.error("Slot attachment not supported: " + attachment + " (" + attachment.name + ")");
                 continue;
-            }
-
-            if (slot.data.name.indexOf("a_xuekuai") >= 0) {
-                if (slot.bone.active == false) {
-                    console.log("a_xuekuai");                    
-                }
             }
 
             if (geometryInfo == null) {
@@ -500,6 +505,8 @@ export class SkeletonRenderer extends Component{
             let darkColor = new Color(1,1,1,1);    // TODO 背面颜色
             let slotBlendMode = slot.data.blendMode;  // TODO 需要改变材质的渲染模式
 
+            let finalColorChanged = false;
+
             if (sTexture) {
                 
                 let slotColor = slot.color;
@@ -527,17 +534,29 @@ export class SkeletonRenderer extends Component{
 					darkColor.a = this.premultipliedAlpha ? 1.0 : 0.0;
 				}
 
-                for(let j = 0, m = geometry.colors.length; j < m; j+=4){
-                    geometry.colors[j] = finalColor.r;
-                    geometry.colors[j+1] = finalColor.g;
-                    geometry.colors[j+2] = finalColor.b;
-                    geometry.colors[j+3] = finalColor.a;
+                if (geometryInfo.lastColor.r != finalColor.r || 
+                    geometryInfo.lastColor.g != finalColor.g || 
+                    geometryInfo.lastColor.b != finalColor.b || 
+                    geometryInfo.lastColor.a != finalColor.a) {
+
+                    finalColorChanged = true;
                 }
 
+                if (finalColorChanged) {
+                    for(let j = 0, m = geometry.colors.length; j < m; j+=4){
+                        geometry.colors[j] = finalColor.r;
+                        geometry.colors[j+1] = finalColor.g;
+                        geometry.colors[j+2] = finalColor.b;
+                        geometry.colors[j+3] = finalColor.a;
+                    }
+                }
             }
+            geometryInfo.finalColorChanged = finalColorChanged;
 
-            if(geometryInfo.lastActive == false){
-                finalColor.a = 0;
+            if (!this.isBatch) {
+                if(geometryInfo.lastActive == false){
+                    finalColor.a = 0;
+                }
             }
 
             for(let j = 0, m = geometry.positions.length / vertexSize; j < m; j++){
@@ -549,58 +568,102 @@ export class SkeletonRenderer extends Component{
             geometry.maxPos = minMax.maxPos;
 
             //this.meshRenderer.mesh.updateSubMesh(geometryInfo.index, geometry);
-        }
+            updateSlotCount++;
 
-        let drawCall = 0;
-        let triangleCount = 0;
-        let vertexCount = 0;
-
-        if (!this.isBatch) {
-            
-            this.dMeshGeometryMap.forEach((value, key) => {
-                if (value.lastActive) {
-                    if (value.meshRenderer.enabled == false) {
-                        value.meshRenderer.enabled = true;
+            if (this.isBatch) {
+                const spineMeshGeometry : SpineMeshGeometry= geometryInfo.geometry as SpineMeshGeometry;
+                if (geometryInfo.lastActive) {
+                    if (!this.isChangeUVs && !geometryInfo.finalColorChanged) {
+                        geometryInfo.spineBatcher.updateGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions,null,null);
                     }
-                    value.meshRenderer.mesh.updateSubMesh(0, value.geometry);
-                    value.meshRenderer.onGeometryChanged();
-                    drawCall++;
-                    triangleCount += value.geometry.indices32.length / 3;
-                    vertexCount += value.geometry.positions.length / vertexSize;
-                }
-                else{
-                    if (value.meshRenderer.enabled == true) {
-                        value.meshRenderer.enabled = false;
+                    else if (!this.isChangeUVs && geometryInfo.finalColorChanged) {
+                        geometryInfo.spineBatcher.updateGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions,null,spineMeshGeometry.colors);
                     }
-                }
-               
-            });
-
-        }
-        else{
-            this.dMeshGeometryMap.forEach((value, key) => {
-                const spineMeshGeometry : SpineMeshGeometry= value.geometry as SpineMeshGeometry;
-                if (value.lastActive) {
-                    value.spineBatcher.updateGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions,spineMeshGeometry.uvs,spineMeshGeometry.colors);
+                    else if(this.isChangeUVs && !geometryInfo.finalColorChanged){
+                        geometryInfo.spineBatcher.updateGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions,spineMeshGeometry.uvs,null);
+                    }
+                    else{
+                        geometryInfo.spineBatcher.updateGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions,spineMeshGeometry.uvs,spineMeshGeometry.colors);
+                    }
                 }
                 else{
                     //console.error("disableGeometry",spineMeshGeometry.slotName);
-                    value.spineBatcher.disableGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions.length / vertexSize);
+                    geometryInfo.spineBatcher.disableGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions.length / vertexSize);
                 }
-               
-                triangleCount += value.geometry.indices32.length / 3;
-                vertexCount += value.geometry.positions.length / vertexSize;
-            });
 
-            this.spineBatcherMap.forEach((value, key) => {
-                drawCall++;
-                value.updateMesh();
-            });
+                // triangleCount += value.geometry.indices32.length / 3;
+                // vertexCount += value.geometry.positions.length / vertexSize;
+            }
+
+        
+           
         }
 
-        this.drawCallCount = drawCall;
-        this.triangleCount = triangleCount;
-        this.vertexCount = vertexCount;
+        //console.error(`step ${currentStep} updateSlotCount ${updateSlotCount}`);
+
+        if (currentStep == totalStep) {
+            let drawCall = 0;
+            let triangleCount = 0;
+            let vertexCount = 0;
+
+            if (!this.isBatch) {
+                
+                this.dMeshGeometryMap.forEach((value, key) => {
+                    if (value.lastActive) {
+                        if (value.meshRenderer.enabled == false) {
+                            value.meshRenderer.enabled = true;
+                        }
+                        value.meshRenderer.mesh.updateSubMesh(0, value.geometry);
+                        value.meshRenderer.onGeometryChanged();
+                        drawCall++;
+                        triangleCount += value.geometry.indices32.length / 3;
+                        vertexCount += value.geometry.positions.length / vertexSize;
+                    }
+                    else{
+                        if (value.meshRenderer.enabled == true) {
+                            value.meshRenderer.enabled = false;
+                        }
+                    }
+                
+                });
+
+            }
+            else{
+                // this.dMeshGeometryMap.forEach((value, key) => {
+                //     const spineMeshGeometry : SpineMeshGeometry= value.geometry as SpineMeshGeometry;
+                //     if (value.lastActive) {
+                //         if (!this.isChangeUVs && !value.finalColorChanged) {
+                //             value.spineBatcher.updateGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions,null,null);
+                //         }
+                //         else if (!this.isChangeUVs && value.finalColorChanged) {
+                //             value.spineBatcher.updateGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions,null,spineMeshGeometry.colors);
+                //         }
+                //         else if(this.isChangeUVs && !value.finalColorChanged){
+                //             value.spineBatcher.updateGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions,spineMeshGeometry.uvs,null);
+                //         }
+                //         else{
+                //             value.spineBatcher.updateGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions,spineMeshGeometry.uvs,spineMeshGeometry.colors);
+                //         }
+                //     }
+                //     else{
+                //         //console.error("disableGeometry",spineMeshGeometry.slotName);
+                //         value.spineBatcher.disableGeometry(spineMeshGeometry.vertexOffset,spineMeshGeometry.positions.length / vertexSize);
+                //     }
+                
+                //     triangleCount += value.geometry.indices32.length / 3;
+                //     vertexCount += value.geometry.positions.length / vertexSize;
+                // });
+
+                this.spineBatcherMap.forEach((value, key) => {
+                    drawCall++;
+                    value.updateMesh();
+                });
+            }
+
+            this.drawCallCount = drawCall;
+            this.triangleCount = triangleCount;
+            this.vertexCount = vertexCount;
+        }
     }
 
     getMinMaxPos(sVertices,vertexSize) : {minPos : Vec3, maxPos : Vec3}{
