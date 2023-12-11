@@ -395,6 +395,10 @@ export class Spine extends Component {
     }
 
     stepRenderer(){
+        if (this.skeletonRenderer == null) {
+            return;
+        }
+
         if (this.renderTotalStepCount > 0 && this.renderStep < this.renderTotalStepCount) {
             this.renderStep++;
             this.skeletonRenderer.onUpdate(this.renderStep,this.renderTotalStepCount);

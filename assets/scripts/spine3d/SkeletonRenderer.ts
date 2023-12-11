@@ -15,16 +15,28 @@ import { PREVIEW_NODE_NAME, SpineTextureContainer } from './SpineInterface';
 import { Vec3 } from 'cc';
 import { SpineMeshGeometry } from './SpineMeshGeometry';
 import { SpineBatcher } from './SpineBatcher';
+import { Slot } from '@spine-core/Slot';
+import { Attachment } from '@spine-core/attachments/Attachment';
 
 export class DynamicGeometryInfo{
+
+    private _lastActive : boolean;
+
     constructor(){
-        this.lastActive = true;
+        this._lastActive = true;
     }
+
+    get lastActive() : boolean{
+        return this._lastActive;
+    }
+    set lastActive(value : boolean){
+        this._lastActive = value;
+    }
+
     index : number = 0;
     geometry : primitives.IDynamicGeometry = null;
     meshRenderer : MeshRenderer = null;
     drawRangeInfo : gfx.DrawInfo = null;
-    lastActive : boolean = true;
     spineBatcher : SpineBatcher = null;
     lastColor : Color = new Color(0,0,0,0);
     finalColorChanged : boolean = true;
@@ -51,7 +63,7 @@ export class SkeletonRenderer extends Component{
     @property({type:Boolean})
     protected premultipliedAlpha = false;
     @property({type:Boolean})
-    protected isBatch = false;
+    protected isBatch = true;
     @property({type:Boolean})
     protected isChangeUVs = false;
 
@@ -65,7 +77,9 @@ export class SkeletonRenderer extends Component{
     protected textures : SpineTextureContainer[] = [];
 
     protected dMeshGeometries: primitives.IDynamicGeometry[] = [];
-    protected dMeshGeometryMap = new Map<string, DynamicGeometryInfo>();
+    protected dMeshGeometryMap = new Map<Attachment, DynamicGeometryInfo>();
+
+    protected slot2AttachmentMap = new Map<Slot, Attachment>();   // 当前显示的Attachment
 
     protected spineBatcherMap = new Map<string, SpineBatcher>();
 
@@ -135,7 +149,8 @@ export class SkeletonRenderer extends Component{
                 gInfo.geometry = spineMeshGeometry;
                 gInfo.meshRenderer = spineBatcher.meshRenderer;
                 gInfo.spineBatcher = spineBatcher;
-                this.dMeshGeometryMap.set(slot.data.name,gInfo);
+                this.dMeshGeometryMap.set(slot.getAttachment(),gInfo);
+                this.slot2AttachmentMap.set(slot,slot.getAttachment());
             }
 
             this.spineBatcherMap.forEach((value, key) => {
@@ -182,7 +197,7 @@ export class SkeletonRenderer extends Component{
         }
     }
 
-    private createMeshGeometry(slot, drawOrder : number) : DynamicGeometryInfo{
+    private createMeshGeometry(slot : Slot, drawOrder : number) : DynamicGeometryInfo{
         const vertexSize = this.vertexSize;
         let skeleton = this.skeleton;
 
@@ -191,7 +206,7 @@ export class SkeletonRenderer extends Component{
             return null;
         }
 
-        let rendererNode = new Node(slot.data.name + "_renderer");
+        let rendererNode = new Node(slot.getAttachment().name + "_renderer");
         if (EDITOR && EDITOR_NOT_IN_PREVIEW) {
             rendererNode.parent = this.previewNode;
         }
@@ -237,7 +252,8 @@ export class SkeletonRenderer extends Component{
             gInfo.index = this.dMeshGeometries.length - 1;
             gInfo.geometry = geometry;
             gInfo.meshRenderer = renderer;
-            this.dMeshGeometryMap.set(slot.data.name,gInfo);    
+            this.dMeshGeometryMap.set(slot.getAttachment(),gInfo); 
+            this.slot2AttachmentMap.set(slot,slot.getAttachment());  
             return gInfo;            
         }
         else {
@@ -360,8 +376,7 @@ export class SkeletonRenderer extends Component{
         let minMax = this.getMinMaxPos(sVertices,vertexSize);
 
         return {
-            slotName : slot.data.name,
-
+            
             positions: sVertices,
             normals: normals,
             uvs: sUVs,
@@ -404,17 +419,49 @@ export class SkeletonRenderer extends Component{
         let slots = this.skeleton.drawOrder;
         let geometryInfo = null;
 
-        let beginIndex = (slots.length / totalStep) * (currentStep - 1);
-        let endIndex = (slots.length / totalStep) * currentStep;
+        let beginIndex = Math.floor((slots.length / totalStep) * (currentStep - 1));
+        let endIndex = Math.ceil((slots.length / totalStep) * currentStep);
+        endIndex = Math.min(endIndex,slots.length);
 
         let updateSlotCount = 0
 
         for (let i = beginIndex, n = endIndex; i < n; i++) { 
+            geometryInfo = null;
             let slot = slots[i];
-            geometryInfo = this.dMeshGeometryMap.get(slot.data.name);
+            if (slot == null) {
+                console.error(`slot ${i} is null`);
+                continue;
+            }
+
 
             const drawOrder = i;
             let attachment = slot.getAttachment();
+            if (attachment) {
+                geometryInfo = this.dMeshGeometryMap.get(slot.getAttachment());
+            }
+
+            const lastAttachment = this.slot2AttachmentMap.get(slot);
+            if (lastAttachment && attachment != lastAttachment) {
+                
+                const lastDynamicGeometry =  this.dMeshGeometryMap.get(lastAttachment);
+                if (lastDynamicGeometry) {
+                    lastDynamicGeometry.lastActive = false;
+                    if (!this.isBatch) {
+                        // if (lastDynamicGeometry.meshRenderer) {
+                        //     lastDynamicGeometry.meshRenderer.mesh.updateSubMesh(0, SkeletonRenderer.Disable_Geometry);
+                        // }
+                    }
+                    else{
+                        lastDynamicGeometry.spineBatcher.disableGeometry((lastDynamicGeometry.geometry as SpineMeshGeometry).vertexOffset,
+                        lastDynamicGeometry.geometry.positions.length / vertexSize);
+                    }
+                }
+            }
+
+            if (attachment && attachment != lastAttachment) {
+                this.slot2AttachmentMap.set(slot,attachment);                
+            }
+
             if (geometryInfo) {
                 let gActive = geometryInfo.lastActive;
 
@@ -434,7 +481,7 @@ export class SkeletonRenderer extends Component{
                 }
     
                 if (slot.bone) {
-                    geometryInfo.lastActive = attachment!= null && slot.bone.active;                
+                    geometryInfo.lastActive = attachment!= null && slot.bone.active;              
                 }
                 else{
                     geometryInfo.lastActive = attachment!= null;
@@ -458,7 +505,7 @@ export class SkeletonRenderer extends Component{
             }
 
             if (geometryInfo == null) {
-                //console.error(`Slot data ${slot.data.name} not found`); 
+                //console.error(`Slot data ${this.getAttachUniqueName(slot)} not found`); 
                 if (!this.isBatch) {
                     this.createMeshGeometry(slot, drawOrder);                    
                 }
@@ -477,7 +524,8 @@ export class SkeletonRenderer extends Component{
                     gInfo.geometry = spineMeshGeometry;
                     gInfo.meshRenderer = spineBatcher.meshRenderer;
                     gInfo.spineBatcher = spineBatcher;
-                    this.dMeshGeometryMap.set(slot.data.name,gInfo);
+                    this.dMeshGeometryMap.set(slot.getAttachment(),gInfo);
+                    this.slot2AttachmentMap.set(slot,slot.getAttachment());
                 }
                 
                 continue;
@@ -487,6 +535,8 @@ export class SkeletonRenderer extends Component{
             let geometry = geometryInfo.geometry;
             let sAttachmentColor : Color;
             let sTexture : Texture;
+
+            
 
             if (attachment instanceof RegionAttachment) {
                 let region = <RegionAttachment>attachment;

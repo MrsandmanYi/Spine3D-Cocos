@@ -22,7 +22,7 @@ export interface SpineMeshGeometry {
     };
     
     texture : Texture;
-    slotName : string; // key
+    //slotName : string; // key
     vertexOffset : number;
 
 }
