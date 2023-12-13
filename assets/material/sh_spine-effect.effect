@@ -90,7 +90,7 @@ CCProgram spine3d-fs %{
     vec4 col = mainColor * texture(mainTexture, v_uv); // 计算最终的颜色
     col.rgb *= v_color.rgb;
     col.a *= v_color.a;
-    ALPHA_TEST(col);
+    ALPHA_TEST(col.a - 0.005);
     return CCFragOutput(col);  
     //return CCFragOutput(v_color);  
   }
