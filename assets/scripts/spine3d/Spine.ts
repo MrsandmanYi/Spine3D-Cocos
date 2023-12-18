@@ -111,30 +111,6 @@ export class Spine extends Component {
     private editorPreview : boolean = false;
     
     private editorPreviewPrev : boolean = false;
-    
-    // testUpdate(value){
-    //     console.log("testUpdate",value);
-
-    //     let geometry: primitives.IDynamicGeometry = {
-    //         positions: new Float32Array([
-    //             0, 0, 0,
-    //             100, 0, 0,
-    //             100, 100, 0,
-    //             0, 100, 0,
-    //         ]),
-    //         indices16: new Uint16Array([
-    //             0, 1, 2,
-    //             0, 2, 3,
-    //         ]),
-    //     };
-    //     const mesh = utils.MeshUtils.createDynamicMesh(0, geometry , undefined, null);
-    //     let meshRenderer = this.addComponent(MeshRenderer);
-    //     meshRenderer.mesh = mesh;
-    //     mesh.updateSubMesh(0, geometry);
-    //     meshRenderer.onGeometryChanged();
-
-        
-    // }
 
     // 编辑器
     async onFocusInEditor(): Promise<void> {
@@ -261,6 +237,7 @@ export class Spine extends Component {
                                     if (pngCount == 0) {
                                         atlasComplete = true;
                                         console.log("pngCount load complete")
+                                        this.processSkeleton();
                                     }
                                 });
                                 //console.log("matStr",matStr);
@@ -268,7 +245,17 @@ export class Spine extends Component {
 
                             });
 
-                            this.textures.push(spineTextureContainer);
+                            let contains = false;
+                            for(let i = 0; i < this.textures.length; i++){
+                                if (this.textures[i].name == spineTextureContainer.name && 
+                                    this.textures[i].texture.uuid == spineTextureContainer.texture.uuid) {
+                                    contains = true;
+                                    break; 
+                                }
+                            }
+                            if (!contains) {
+                                this.textures.push(spineTextureContainer);                                
+                            }
                         });
                     });
                 }
@@ -278,7 +265,6 @@ export class Spine extends Component {
         while(!atlasComplete){
             await new Promise(resolve => setTimeout(resolve, 100));
         }
-        this.processSkeleton();
 
         await new Promise(resolve => setTimeout(resolve, 100));
         await new Promise(resolve => setTimeout(resolve, 100));
@@ -296,21 +282,6 @@ export class Spine extends Component {
             this.atlasAttachmentLoader = null;
             this.spineAtlas = null;
         }
-
-        // const ppp = Editor.Project.path;
-        // console.log(ppp);
-        // console.log(Editor);
-        // console.log(Editor.Message.request);
-        // console.log("nnnn", this.skeletonAsset.uuid);
-        
-        //await this.testEE();
-        // require('fs').readFile("C:/Users/yiyao/Pictures/hero_001_frog.json", (err, data) => {
-        //     if (err) {
-        //         console.error(err);
-        //         return;
-        //     }
-        //     console.log(data);
-        // });
     }
 
     async loadAsset(uuid : string) : Promise<Asset> {
@@ -330,10 +301,7 @@ export class Spine extends Component {
     }
 
     onLostFocusInEditor(): void {
-        // 把编辑器下预览的东西删除
-        // this.clearPreview();
-        // this.editorPreview = false;
-        // this.editorPreviewPrev = false;
+
     }
 
     start() {
