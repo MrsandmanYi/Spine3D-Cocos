@@ -447,7 +447,9 @@
       "__uuid__": "277e0819-8587-4edd-8c7a-e4ccf5533960",
       "__expectedType__": "cc.ImageAsset"
     },
-    "name": "spineboy-pma"
+    "name": "spineboy-pma",
+    "vertexCount": 800,
+    "indicCount": 2400
   },
   {
     "__type__": "cc.SceneGlobals",
