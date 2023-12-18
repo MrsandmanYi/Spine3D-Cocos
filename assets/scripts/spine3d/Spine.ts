@@ -24,6 +24,8 @@ import { Asset } from 'cc';
 import { SkeletonBinary } from '@spine-core/SkeletonBinary';
 import { BoneData } from '@spine-core/BoneData';
 import { BufferAsset } from 'cc';
+import { MeshAttachment } from '@spine-core/attachments/MeshAttachment';
+import { RegionAttachment } from '@spine-core/index';
 
 export type EnumType = Record<string, string | number>;
 const socketBoneMatrix4 = new Mat4();
@@ -267,7 +269,6 @@ export class Spine extends Component {
                             });
 
                             this.textures.push(spineTextureContainer);
-                            
                         });
                     });
                 }
@@ -277,11 +278,11 @@ export class Spine extends Component {
         while(!atlasComplete){
             await new Promise(resolve => setTimeout(resolve, 100));
         }
+        this.processSkeleton();
+
+        await new Promise(resolve => setTimeout(resolve, 100));
         await new Promise(resolve => setTimeout(resolve, 100));
 
-
-        //console.error("processSkeleton");
-        this.processSkeleton();
         this._indexBones();
         this.processPreview();
 
@@ -423,17 +424,16 @@ export class Spine extends Component {
         }
     }
 
-    
-    private initSpine() {
+    private initSkeletonData() {
 
         if (this.skeletonAsset == null) {
             console.error("skeletonAsset is null");
-            return;
+            return false;
         }
 
         if (this.atlasAsset == null) {
             console.error("atlasAsset is null");
-            return;
+            return false;
         }
 
         let atlas = new TextureAtlas(this.atlasAsset);
@@ -457,7 +457,14 @@ export class Spine extends Component {
         }
 
         this.skeleton = new Skeleton(this.skeletonData);
+        return true;
+    }
+    
+    private initSpine() {
 
+        if(!this.initSkeletonData()){
+            return;
+        }
 
         if (this.isValidSkin(this.defaultSkin)) {
             this.skeleton.setSkinByName(this.defaultSkin);
@@ -691,6 +698,101 @@ export class Spine extends Component {
             if (this.skins.indexOf(this.defaultSkin) == -1) {
                 this.defaultSkin = this.skeletonData.skins[0].name;                
             }
+
+            let maxVertexCountMap = new Map<any, number>();
+            let maxTriangleCountMap = new Map<any, number>();
+            
+            skins.forEach((skin) => {
+                let vertexCountMap = new Map<any, number>();
+                let triangleCountMap = new Map<any, number>();
+
+                for(let i = 0; i < skin.attachments.length; i++) {
+
+                    let attachmentMap = skin.attachments[i];
+
+                    for (let name in attachmentMap) {
+                        let attachment = attachmentMap[name];
+                        if (attachment instanceof MeshAttachment) {
+                            let vc = vertexCountMap.get(attachment.region.texture._image);
+                            if (vc == null) {
+                                vc = 0;
+
+                            }
+                            let tc = triangleCountMap.get(attachment.region.texture._image);
+                            if (tc == null) {
+                                tc = 0;
+                            }
+                            let mesh = <MeshAttachment>attachment;
+                            //console.error(mesh.worldVerticesLength)
+                            vc += (mesh.worldVerticesLength >> 1);
+                            tc += attachment.triangles.length;
+
+                            vertexCountMap.set(attachment.region.texture._image,vc);
+                            triangleCountMap.set(attachment.region.texture._image,tc);
+                        }
+                        else if (attachment instanceof RegionAttachment) {
+                            let vc = vertexCountMap.get(attachment.region.texture._image);
+                            if (vc == null) {
+                                vc = 0;
+                            }
+                            let tc = triangleCountMap.get(attachment.region.texture._image);
+                            if (tc == null) {
+                                tc = 0;
+                            }
+                            vc += 4;
+                            tc += 6;
+                            vertexCountMap.set(attachment.region.texture._image,vc);
+                            triangleCountMap.set(attachment.region.texture._image,tc);
+                        }
+                        else{
+                            //console.error(attachment);
+                        }
+                    }
+
+                   
+                }
+                
+                vertexCountMap.forEach((value,key)=>{
+                    let max = maxVertexCountMap.get(key);
+                    if (max == null) {
+                        max = 0;
+                    }
+                    if (max < value) {
+                        max = value;
+                    }
+                    maxVertexCountMap.set(key,max);
+                });
+
+                triangleCountMap.forEach((value,key)=>{
+                    let max = maxTriangleCountMap.get(key);
+                    if (max == null) {
+                        max = 0;
+                    }
+                    if (max < value) {
+                        max = value;
+                    }
+                    maxTriangleCountMap.set(key,max);
+                });
+                
+                
+            });
+
+            for (let i = this.textures.length-1; i >= 0; i--) {
+                let texture = this.textures[i];
+
+                let maxVertexCount = maxVertexCountMap.get(texture.texture);
+                if (maxVertexCount == null) {
+                    maxVertexCount = 0;
+                }
+                texture.vertexCount = maxVertexCount;
+
+                let maxTriangleCount = maxTriangleCountMap.get(texture.texture);
+                if (maxTriangleCount == null) {
+                    maxTriangleCount = 0;
+                }
+                texture.indicCount = maxTriangleCount; 
+            }
+            console.log("textures",this.textures);
         }
         else {
             console.error('Spine: no json data');

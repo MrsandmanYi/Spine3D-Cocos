@@ -311,6 +311,7 @@
     "twoColorTint": false,
     "premultipliedAlpha": false,
     "isBatch": true,
+    "isChangeUVs": false,
     "drawCallCount": 0,
     "triangleCount": 0,
     "vertexCount": 0,
@@ -448,8 +449,8 @@
       "__expectedType__": "cc.ImageAsset"
     },
     "name": "spineboy-pma",
-    "vertexCount": 800,
-    "indicCount": 2400
+    "vertexCount": 426,
+    "indicCount": 303
   },
   {
     "__type__": "cc.SceneGlobals",
